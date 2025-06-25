@@ -12,27 +12,31 @@ of the mouse's file path is necessary to unbind the mouse from the default usbhi
 Plug in your preferred USB mouse into your Pi so that the Pi can detect your mouse
 
 ## Step 4
-Check connected USB devices and look for your mouse (Etc `Bus 001 Device 005: ID 046d:c542 Logitech, Inc. M185 compact wireless mouse`)
-Take note of the device ID
+Check connected USB devices and look for your mouse (Etc `Bus 001 Device 005: ID 046d:c542 Logitech, Inc. M185 compact wireless mouse`)\
+Take note of the device ID\
 ```lsusb```
 
-To identify the mouse filepath
+To identify the mouse filepath\
 ```lsusb ls /sys/bus/usb/devices/```
 
-To find our which is your mouse folder (Etc `1-1.4`)
+To find our which is your mouse folder (Etc `1-1.4`)\
 ```grep -r "<your-mouse-vendor-ID>" /sys/bus/usb/devices/*/idVendor```
 
 ## Step 5
-Unbind the default usbhid driver
+Unbind the default usbhid driver\
 ```echo '1-1.4:1.0' | sudo tee /sys/bus/usb/drivers/usbhid/unbind```
 
 ## Step 6
-Insert custom driver
+Insert custom driver\
 ```sudo insmod driver.ko```
 
 ## Step 7
-Check the custom driver is successfully inserted and utilised
+Check the custom driver is successfully inserted and utilised\
 ```dmesg | tail -n 10```
 
 Expected Output:
-```[ 1106.514858] USB Mouse Driver Module Unloading... [ 1110.764633] USB Mouse Driver Module Initialising... [ 1110.764751] Your USB Mouse, Vendor ID: 0x0000, Product ID: 0x0000, has been successfully connected!```
+```
+[ 1106.514858] USB Mouse Driver Module Unloading... 
+[ 1110.764633] USB Mouse Driver Module Initialising... 
+[ 1110.764751] Your USB Mouse, Vendor ID: 0x0000, Product ID: 0x0000, has been successfully connected!
+```
