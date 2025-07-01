@@ -16,11 +16,18 @@ Check connected USB devices and look for your mouse (Etc `Bus 001 Device 005: ID
 Take note of the device ID\
 ```lsusb```
 
-To identify the mouse filepath\
-```lsusb ls /sys/bus/usb/devices/```
+<!-- To identify the mouse filepath\
+```lsusb ls /sys/bus/usb/devices/``` -->
 
-To find our which is your mouse folder (Etc `1-1.4`)\
+To find our which is your mouse folder (Etc ID = "046D")\
 ```grep -r "<your-mouse-vendor-ID>" /sys/bus/usb/devices/*/idVendor```
+
+Example command:
+```grep -r "046d" /sys/bus/usb/devices/*/idVendor```
+
+Expected Output Example: (mouse folder will be 1-1.4 in this case)
+```/sys/bus/usb/devices/1-1.4/idVendor:046d```
+
 
 ## Step 5
 Unbind the default usbhid driver\
