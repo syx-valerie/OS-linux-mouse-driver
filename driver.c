@@ -69,6 +69,7 @@ static ssize_t mouse_read(struct file *file, char __user *buf, size_t count, lof
     struct usb_mouse *mouse = file->private_data;
     char buffer[64];
     int len = snprintf(buffer, sizeof(buffer), "Click count: %d\n", mouse->click_count);
+    *ppos = 0;
     return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
 
