@@ -42,6 +42,11 @@ else
     echo "[INFO] Mouse already unbound from usbhid driver."
 fi
 
+if [[ -e /dev/usb_mouse_clicks ]]; then
+    echo "[INFO] Device node /dev/usb_mouse_clicks already exists. Removing module to reset."
+    sudo rmmod driver || true
+    sleep 1
+fi
 
 echo "[STEP 6] Inserting USB mouse driver module into kernel..."
 sudo insmod driver.ko
