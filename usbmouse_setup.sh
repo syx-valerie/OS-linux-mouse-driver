@@ -12,26 +12,40 @@ read -p "Press ENTER once the mouse is connected."
 
 echo "[STEP 4] Detecting USB mouse..."
 
-mouse_dev_dir=$(find /sys/bus/usb/devices/ -maxdepth 1 -type d \
-    -exec bash -c '[[ -f "$1/bInterfaceClass" && $(cat "$1/bInterfaceClass") == "03"]] && \
-                    [[-f "$1/bInterfaceSubClass" && $(cat "$1/bInterfaceSubClass") == "01"]] && \
-                    [[-f "$1/bInterfaceProtocol" && $(cat "$1/bInterfaceProtocol") == "02"]] && echo "$1"' _ {} \; | head -n1)
+# Iterate through interfaces bound to usbhid driver
+for iface in /sys/bus/usb/drivers/usbhid/*:*; do
+    # Skip non-directory entries (like 'bind', 'unbind')
+    [[ -d "$iface" ]] || continue
+
+
+    if [[ -f "$iface/bInterfaceClass" && $(cat "$iface/bInterfaceClass") == "03" && \
+          -f "$iface/bInterfaceSubClass" && $(cat "$iface/bInterfaceSubClass") == "01" && \
+          -f "$iface/bInterfaceProtocol" && $(cat "$iface/bInterfaceProtocol") == "02" ]]; then
+        mouse_dev_dir="$iface"
+        break
+    fi
+done
 
 if [[ -z "$mouse_dev_dir" ]]; then
-    echo "[ERROR] No USB mouse detected. Please ensure your mouse is connected and try again."
+    echo "[ERROR] No USB mouse detected bound to usbhid driver."
     exit 1
 fi
 
-mouse_interface=$(basename "$mouse_dev_dir")
-usb_interface="${mouse_interface}:1.0"
-
+usb_interface=$(basename "$mouse_dev_dir")
 echo "[INFO] Found USB HID mouse interface: $usb_interface"
 
-if [[ ! -e /sys/bus/usb/drivers/usbhid/$usb_interface ]]; then  # Check if mouse is already unbound
-    echo "[INFO] Mouse already unbound from usbhid driver."
-else
+# Unbind from usbhid if needed
+if [[ -e "/sys/bus/usb/drivers/usbhid/$usb_interface" ]]; then
     echo "[STEP 5] Unbinding mouse from usbhid driver..."
     echo "$usb_interface" | sudo tee /sys/bus/usb/drivers/usbhid/unbind
+else
+    echo "[INFO] Mouse already unbound from usbhid driver."
+fi
+
+if [[ -e /dev/usb_mouse_clicks ]]; then
+    echo "[INFO] Device node /dev/usb_mouse_clicks already exists. Removing module to reset."
+    sudo rmmod driver || true
+    sleep 1
 fi
 
 echo "[STEP 6] Inserting USB mouse driver module into kernel..."
