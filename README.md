@@ -16,9 +16,6 @@ Check connected USB devices and look for your mouse (Etc `Bus 001 Device 005: ID
 Take note of the device ID\
 ```lsusb```
 
-<!-- To identify the mouse filepath\
-```lsusb ls /sys/bus/usb/devices/``` -->
-
 To find our which is your mouse folder (Etc ID = "046D")\
 ```grep -r "<your-mouse-vendor-ID>" /sys/bus/usb/devices/*/idVendor```
 
@@ -45,5 +42,5 @@ Expected Output:
 ```
 [ 1106.514858] USB Mouse Driver Module Unloading... 
 [ 1110.764633] USB Mouse Driver Module Initialising... 
-[ 1110.764751] Your USB Mouse, Vendor ID: 0x0000, Product ID: 0x0000, has been successfully connected!
+[ 1110.764751] Your USB Mouse, Vendor ID: 0x046d, Product ID: 0xc542, has been successfully connected!
 ```
