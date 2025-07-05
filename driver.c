@@ -10,24 +10,38 @@
 // USB mouse structure
 struct usb_mouse {
     struct usb_device *usbdev;
-    struct input_dev *inputdev;
+    // struct input_dev *inputdev;
     struct urb *irq;
     unsigned char *data;
     dma_addr_t data_dma;
     int click_count;
     int pkt_len;
     bool enabled;
+    int x_pos;
+    int y_pos;
 
-    //char device
-    struct cdev cdev;
-    dev_t devt;
-    struct class *class;
-    struct device *device;
+    // click counter char device
+    struct cdev click_cdev;
+    dev_t click_devt;
+    struct class *click_class;
+    struct device *click_device;
+
+    // movement tracking char device
+    struct cdev move_cdev;
+    dev_t move_devt;
+    struct class *move_class;
+    struct device *move_device;
+
+    // Mutex for movement data read sync
+    struct mutex move_mutex;
+    unsigned char last_packet[3];
+    bool packet_available;
 
 };
 
 // Global variables
-static struct class *mouse_class;
+static struct class *click_class;
+static struct class *move_class;
 
 static const struct usb_device_id usb_device_table[] = {
     {USB_INTERFACE_INFO(0x03, 0x01, 0x02)},  // Recognise generic USB mouse
@@ -47,6 +61,22 @@ static void usb_mouse_irq(struct urb *urb) //triggered when mouse sends data
             printk(KERN_INFO "Mouse clicked! Total: %d\n", mouse->click_count);
         }
         last_left = left_pressed;
+
+        // Track mouse movement
+        signed char dx = mouse->data[1];
+        signed char dy = mouse->data[2];
+        mouse->x_pos += dx;
+        mouse->y_pos -= dy;
+
+        // Check for movement data in kernel logs
+        printk(KERN_INFO "Raw data: 0x%02x 0x%02x 0x%02x | dx: %d, dy: %d\n",
+            mouse->data[0], mouse->data[1], mouse->data[2], dx, dy);
+
+        // Save last packet data for movement device
+        mutex_lock(&mouse->move_mutex);
+        memcpy(mouse->last_packet, mouse->data, 3);
+        mouse->packet_available = true;
+        mutex_unlock(&mouse->move_mutex);
     } else if (status != 0){
         printk(KERN_WARNING "URB error status: %d\n", status);
     }
@@ -56,15 +86,15 @@ static void usb_mouse_irq(struct urb *urb) //triggered when mouse sends data
 
 
 
-// --- char device handlers
-static int mouse_open(struct inode *inode, struct file *file)
+// --- click char device handlers
+static int click_open(struct inode *inode, struct file *file)
 {
-    struct usb_mouse *mouse = container_of(inode->i_cdev, struct usb_mouse, cdev);
+    struct usb_mouse *mouse = container_of(inode->i_cdev, struct usb_mouse, click_cdev);
     file->private_data = mouse;
     return 0;
 }
 
-static ssize_t mouse_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+static ssize_t click_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
     struct usb_mouse *mouse = file->private_data;
     char buffer[64];
@@ -75,10 +105,11 @@ static ssize_t mouse_read(struct file *file, char __user *buf, size_t count, lof
 
 
 
-static ssize_t mouse_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
+static ssize_t click_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
     struct usb_mouse *mouse = file->private_data;
     char buffer[16];
+
     if (count > sizeof(buffer) - 1)
         return -EINVAL;
     if (copy_from_user(buffer, buf, count))
@@ -99,14 +130,74 @@ static ssize_t mouse_write(struct file *file, const char __user *buf, size_t cou
 
 }
 
-static const struct file_operations fops = {
+static const struct file_operations click_fops = {
     .owner = THIS_MODULE,
-    .read = mouse_read,
-    .write = mouse_write,
-    .open = mouse_open,
+    .read = click_read,
+    .write = click_write,
+    .open = click_open,
 };
 
 
+// --- movement char device handlers
+static int move_open(struct inode *inode, struct file *file)
+{
+    struct usb_mouse *mouse = container_of(inode->i_cdev, struct usb_mouse, move_cdev);
+    file->private_data = mouse;
+    return 0;
+}
+
+static ssize_t move_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+    struct usb_mouse *mouse = file->private_data;
+    char buffer[64];
+    int len;
+
+    mutex_lock(&mouse->move_mutex);
+    if (!mouse->packet_available) {
+        mutex_unlock(&mouse->move_mutex);
+        return 0;
+    }
+
+    len = snprintf(buffer, sizeof(buffer), "Position: (%d, %d)\nRaw packet: 0x%02x 0x%02x 0x%02x\n", 
+        mouse->x_pos, mouse->y_pos,
+        mouse->last_packet[0], mouse->last_packet[1], mouse->last_packet[2]);
+    mutex_unlock(&mouse->move_mutex);
+
+    *ppos = 0;
+    return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t move_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
+{
+    struct usb_mouse *mouse = file->private_data;
+    char buffer[16];
+
+    if (count > sizeof(buffer) - 1)
+        return -EINVAL;
+    if (copy_from_user(buffer, buf, count))
+        return -EFAULT;
+    buffer[count] = '\0';
+    
+    if (strncmp(buffer, "reset", 5) == 0) {
+        mouse->x_pos = 0;
+        mouse->y_pos = 0;
+        printk(KERN_INFO "Mouse position reset.\n");
+    } else if (strncmp(buffer, "stop", 4) == 0) {
+        mouse->enabled = false;
+        printk(KERN_INFO "Mouse movement tracking paused.\n");
+    } else if (strncmp(buffer, "start", 5) == 0) {
+        mouse->enabled = true;
+        printk(KERN_INFO "Mouse movement tracking resumed.\n");
+    }
+    return count;
+}
+
+static const struct file_operations move_fops = {
+    .owner = THIS_MODULE,
+    .read = move_read,
+    .write = move_write,
+    .open = move_open,
+};
 
 // -------- usb probe & disconnect --------
 static int usb_mouse_connect(struct usb_interface *interface, const struct usb_device_id *id) {
@@ -125,52 +216,92 @@ static int usb_mouse_connect(struct usb_interface *interface, const struct usb_d
     }
     printk(KERN_INFO "Mouse connected! Vendor: 0x%04x, Product: 0x%04x\n",
            dev->descriptor.idVendor, dev->descriptor.idProduct);
+
     mouse = kzalloc(sizeof(struct usb_mouse), GFP_KERNEL);
     if (!mouse)
         return -ENOMEM;
+
     mouse->usbdev = dev;
     mouse->pkt_len = endpoint->wMaxPacketSize;
     if (mouse->pkt_len == 0)
         mouse->pkt_len = 8;
     mouse->enabled = true;
+    mutex_init(&mouse->move_mutex);
+    mouse->packet_available = false;
+
     mouse->data = usb_alloc_coherent(dev, mouse->pkt_len, GFP_ATOMIC, &mouse->data_dma);
     if (!mouse->data)
         goto error1;
+
     mouse->irq = usb_alloc_urb(0, GFP_KERNEL);
     if (!mouse->irq)
         goto error2;
+
     usb_fill_int_urb(mouse->irq, dev,
                      usb_rcvintpipe(dev, endpoint->bEndpointAddress),
                      mouse->data, mouse->pkt_len,
                      usb_mouse_irq, mouse, endpoint->bInterval);
+
     mouse->irq->transfer_dma = mouse->data_dma;
     mouse->irq->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+
     usb_set_intfdata(interface, mouse);
+
     if (usb_submit_urb(mouse->irq, GFP_KERNEL))
         goto error3;
 
-    // char device setup
-    if (alloc_chrdev_region(&mouse->devt, 0, 1, "usb_mouse_clicks"))
+    // click char device setup
+    if (alloc_chrdev_region(&mouse->click_devt, 0, 1, "usb_mouse_clicks"))
         goto error3;
-    cdev_init(&mouse->cdev, &fops);
-    mouse->cdev.owner = THIS_MODULE;
-    if (cdev_add(&mouse->cdev, mouse->devt, 1))
+
+    cdev_init(&mouse->click_cdev, &click_fops);
+    mouse->click_cdev.owner = THIS_MODULE;
+    if (cdev_add(&mouse->click_cdev, mouse->click_devt, 1))
         goto error4;
-    mouse->class = class_create("usb_mouse_class");
-    device_create(mouse_class, NULL, mouse->devt, NULL, "usb_mouse_clicks");
-    if (IS_ERR(mouse->class))
+
+    mouse->click_class = class_create("usb_mouse_click_class");
+    if (IS_ERR(mouse->click_class))
         goto error5;
-    mouse->device = device_create(mouse->class, NULL, mouse->devt, NULL, "usb_mouse_clicks");
-    if (IS_ERR(mouse->device))
+
+    mouse->click_device = device_create(mouse->click_class, NULL, mouse->click_devt, NULL, "usb_mouse_clicks");
+    if (IS_ERR(mouse->click_device))
         goto error6;
-    printk(KERN_INFO "Click counter initialized.\n");
+
+
+    //movement char device setup
+    if (alloc_chrdev_region(&mouse->move_devt, 0, 1, "usb_mouse_movements"))
+        goto error7;
+    
+    cdev_init(&mouse->move_cdev, &move_fops);
+
+    mouse->move_cdev.owner = THIS_MODULE;
+    if (cdev_add(&mouse->move_cdev, mouse->move_devt, 1))
+        goto error8;
+    
+    mouse->move_class = class_create("usb_mouse_move_class");
+    if (IS_ERR(mouse->move_class))
+        goto error9;
+
+    mouse->move_device = device_create(mouse->move_class, NULL, mouse->move_devt, NULL, "usb_mouse_movements");
+    if (IS_ERR(mouse->move_device))
+        goto error10;
+
+    printk(KERN_INFO "Click counter and movement tracker initialized.\n");
     return 0;
+error10:
+    class_destroy(mouse->move_class);
+error9:
+    cdev_del(&mouse->move_cdev);
+error8:
+    unregister_chrdev_region(mouse->move_devt, 1);
+error7:
+    device_destroy(mouse->click_class, mouse->click_devt);
 error6:
-    class_destroy(mouse->class);
+    class_destroy(mouse->click_class);
 error5:
-    cdev_del(&mouse->cdev);
+    cdev_del(&mouse->click_cdev);
 error4:
-    unregister_chrdev_region(mouse->devt, 1);
+    unregister_chrdev_region(mouse->click_devt, 1);
 error3:
     usb_free_urb(mouse->irq);
 error2:
@@ -184,13 +315,21 @@ error1:
 // Called when USB mouse disconnected
 static void usb_mouse_disconnect(struct usb_interface *interface) {
     struct usb_mouse *mouse = usb_get_intfdata(interface);
+
     usb_kill_urb(mouse->irq);
     usb_free_urb(mouse->irq);
     usb_free_coherent(mouse->usbdev, mouse->pkt_len, mouse->data, mouse->data_dma);
-    device_destroy(mouse->class, mouse->devt);
-    class_destroy(mouse->class);
-    cdev_del(&mouse->cdev);
-    unregister_chrdev_region(mouse->devt, 1);
+
+    device_destroy(mouse->click_class, mouse->click_devt);
+    class_destroy(mouse->click_class);
+    cdev_del(&mouse->click_cdev);
+    unregister_chrdev_region(mouse->click_devt, 1);
+
+    device_destroy(mouse->move_class, mouse->move_devt);
+    class_destroy(mouse->move_class);
+    cdev_del(&mouse->move_cdev);
+    unregister_chrdev_region(mouse->move_devt, 1);
+
     kfree(mouse);
     printk(KERN_INFO "USB Mouse Driver unloaded.\n");
 }
@@ -211,6 +350,11 @@ static struct usb_driver usb_mouse_driver = {
 static int __init usb_mouse_init(void) {
     int result;
     printk(KERN_INFO "USB Mouse Driver Module Initialising...\n");
+
+    // Initialise global classes
+    click_class = NULL;
+    move_class = NULL;
+
     result = usb_register(&usb_mouse_driver);
 
     // Error Handling
@@ -233,10 +377,3 @@ module_init(usb_mouse_init);
 module_exit(usb_mouse_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("USB Mouse Driver");
-
-
-
-
-
-
-
