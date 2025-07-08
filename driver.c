@@ -1,3 +1,19 @@
+/* USB Mouse Driver with two character devices:
+ * - one char device counts mouse left-clicks
+ * - another char device tracks mouse movements in terms of relative movement and packet data
+ * 
+ * This kernel module creates a USB mouse driver with functionality to track mouse left-clicks and movements.
+ * 
+ * Userspace interaction via:
+ * 1. /dev/usb_mouse_clicks
+ *    Read: returns total number of left-clicks
+ *    Write: accepts "start", "stop" and "reset" commands to control click counting
+ * 
+ * 2. /dev/usb_mouse_movements
+ *    Read: returns current (x,y) position and latest raw data packet
+ *    Write: accepts "start", "stop" and "reset" commands to control movement tracking
+ */
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/usb.h>
@@ -7,10 +23,9 @@
 #include <linux/cdev.h>     // For character device registeration
 #include <linux/mutex.h>    // For mutex lock
 
-// USB mouse structure
+// USB mouse structure (holds mouse state, data buffers, character devices and sync primitives)
 struct usb_mouse {
     struct usb_device *usbdev;
-    // struct input_dev *inputdev;
     struct urb *irq;
     unsigned char *data;
     dma_addr_t data_dma;
@@ -20,13 +35,13 @@ struct usb_mouse {
     int x_pos;
     int y_pos;
 
-    // click counter char device
+    // Click counter char device
     struct cdev click_cdev;
     dev_t click_devt;
     struct class *click_class;
     struct device *click_device;
 
-    // movement tracking char device
+    // Movement tracking char device
     struct cdev move_cdev;
     dev_t move_devt;
     struct class *move_class;
@@ -49,7 +64,7 @@ static const struct usb_device_id usb_device_table[] = {
 };
 MODULE_DEVICE_TABLE(usb, usb_device_table);
 
-static void usb_mouse_irq(struct urb *urb) //triggered when mouse sends data
+static void usb_mouse_irq(struct urb *urb) // Triggered when mouse sends data
 {
     struct usb_mouse *mouse = urb->context;
     int status = urb->status;
@@ -72,7 +87,7 @@ static void usb_mouse_irq(struct urb *urb) //triggered when mouse sends data
         printk(KERN_INFO "Raw data: 0x%02x 0x%02x 0x%02x | dx: %d, dy: %d\n",
             mouse->data[0], mouse->data[1], mouse->data[2], dx, dy);
 
-        // Save last packet data for movement device
+        // Save last packet data for movement device and updates availability flag, protected by mutex
         mutex_lock(&mouse->move_mutex);
         memcpy(mouse->last_packet, mouse->data, 3);
         mouse->packet_available = true;
@@ -83,7 +98,6 @@ static void usb_mouse_irq(struct urb *urb) //triggered when mouse sends data
     usb_submit_urb(urb, GFP_ATOMIC);
     return;
 }
-
 
 
 // --- click char device handlers
@@ -103,8 +117,7 @@ static ssize_t click_read(struct file *file, char __user *buf, size_t count, lof
     return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
 
-
-
+// Accepts "start", "stop" or "reset" commands from userspace.c to control click counter
 static ssize_t click_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
     struct usb_mouse *mouse = file->private_data;
@@ -167,6 +180,7 @@ static ssize_t move_read(struct file *file, char __user *buf, size_t count, loff
     return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
 
+// Accepts "start", "stop" or "reset" commands from userspace.c to control movement tracking
 static ssize_t move_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
     struct usb_mouse *mouse = file->private_data;
@@ -198,6 +212,7 @@ static const struct file_operations move_fops = {
     .write = move_write,
     .open = move_open,
 };
+
 
 // -------- usb probe & disconnect --------
 static int usb_mouse_connect(struct usb_interface *interface, const struct usb_device_id *id) {
@@ -288,29 +303,30 @@ static int usb_mouse_connect(struct usb_interface *interface, const struct usb_d
 
     printk(KERN_INFO "Click counter and movement tracker initialized.\n");
     return 0;
-error10:
+error10: // Failed to create movement char device
     class_destroy(mouse->move_class);
-error9:
+error9:  //  Failed to create movement class
     cdev_del(&mouse->move_cdev);
-error8:
+error8:  // Failed to add movement char device
     unregister_chrdev_region(mouse->move_devt, 1);
-error7:
+error7:  // Failed to allocate movement device number
     device_destroy(mouse->click_class, mouse->click_devt);
-error6:
+error6:  // Failed to create click char device
     class_destroy(mouse->click_class);
-error5:
+error5:  // Failed to create click class
     cdev_del(&mouse->click_cdev);
-error4:
+error4:  // Failed to add click char device
     unregister_chrdev_region(mouse->click_devt, 1);
-error3:
+error3:  // Failed to submit URB
     usb_free_urb(mouse->irq);
-error2:
+error2:  // Failed to allocate URB
     usb_free_coherent(mouse->usbdev, mouse->pkt_len, mouse->data, mouse->data_dma);
-error1:
+error1:  // Failed to allocate memory for mouse structure
     kfree(mouse);
     return -ENOMEM;
 
 }
+
 
 // Called when USB mouse disconnected
 static void usb_mouse_disconnect(struct usb_interface *interface) {
@@ -335,7 +351,6 @@ static void usb_mouse_disconnect(struct usb_interface *interface) {
 }
 
 
-
 // USB Driver Structure
 static struct usb_driver usb_mouse_driver = {
     .name = "usb_mouse_driver",
@@ -343,7 +358,6 @@ static struct usb_driver usb_mouse_driver = {
     .probe = usb_mouse_connect,
     .disconnect = usb_mouse_disconnect,
 };
-
 
 
 // Module Load Function
@@ -364,7 +378,6 @@ static int __init usb_mouse_init(void) {
     }
     return 0;
 }
-
 
 
 // Module Exit Function

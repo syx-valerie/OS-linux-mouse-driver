@@ -17,7 +17,7 @@ for iface in /sys/bus/usb/drivers/usbhid/*:*; do
     # Skip non-directory entries (like 'bind', 'unbind')
     [[ -d "$iface" ]] || continue
 
-
+    # Check if interface matches HID mouse
     if [[ -f "$iface/bInterfaceClass" && $(cat "$iface/bInterfaceClass") == "03" && \
           -f "$iface/bInterfaceSubClass" && $(cat "$iface/bInterfaceSubClass") == "01" && \
           -f "$iface/bInterfaceProtocol" && $(cat "$iface/bInterfaceProtocol") == "02" ]]; then
