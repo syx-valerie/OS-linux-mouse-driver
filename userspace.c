@@ -9,7 +9,8 @@
 
 void movement_tracker_menu(void);
 void set_raw_mode(int enable);
-void click_counter_menu(void);
+void click_logger(void);
+
 
 int main() {
 
@@ -36,7 +37,7 @@ int main() {
 
         switch (user_choice) {
             case 1:
-                click_counter_menu();
+                click_logger();
                 break;
 
             case 2:
@@ -55,80 +56,75 @@ int main() {
 }
 
 // Functionality: Mouse left-click counter, includes viewing click count, resetting counter, stopping and resuming count
-void click_counter_menu() {
+void click_logger() {
     int fd = open("/dev/usb_mouse_clicks", O_RDWR);
-
     if (fd < 0) {
         perror("Failed to open /dev/usb_mouse_clicks");
         return;
     }
 
-    int choice;
-
     while (1) {
-        printf("\n-- Click Counter --\n");
-        printf("1. View Click Count\n");
-        printf("2. Reset Counter\n");
-        printf("3. Stop Counting\n");
-        printf("4. Resume Counting\n");
-        printf("5. Back to Main Menu\n");
-        printf("Enter choice: ");
+        set_raw_mode(1);  // Enable non-blocking input
+        printf("Click counter initialized.\n");
+        printf("\n Real-time mouse click logging started (press 'q' to quit)\n");
 
-        if (scanf("%d", &choice) != 1) {
-            printf("Invalid input.\n");
-            while (getchar() != '\n'); // Clear input buffer
-            continue;
+        int prev_count = -1;
+        char buffer[128];
+
+        while (1) {
+            lseek(fd, 0, SEEK_SET);
+            int len = read(fd, buffer, sizeof(buffer) - 1);
+            if (len > 0) {
+                buffer[len] = '\0';
+                int click_count;
+                if (sscanf(buffer, "Click count: %d", &click_count) == 1 && click_count != prev_count) {
+                    printf("[Mouse Click] Count: %d\n", click_count);
+                    prev_count = click_count;
+                }
+            }
+
+            char ch;
+            if (read(STDIN_FILENO, &ch, 1) > 0 && (ch == 'q' || ch == 'Q')) {
+                break;
+            }
+
+            usleep(200000); // 200ms delay
         }
 
-        switch (choice) {
-            case 1: {
-                char buffer[128] = {0};
-                int len = read(fd, buffer, sizeof(buffer) - 1);
+        set_raw_mode(0);  // Restore terminal input mode
 
-                if (len > 0) {
-                    buffer[len] = '\0';
-                    printf("[Click] %s\n", buffer);
+        // Post-logger menu
+        int post_choice = 0;
+        while (1) {
+            printf("\n-- Click Logger Menu --\n");
+            printf("1. Resume click logging\n");
+            printf("2. Reset click counter and restart\n");
+            printf("3. Exit program\n");
+            printf("Enter choice: ");
 
-                } else if (len == 0) {
-                    printf("[Click] No clicks detected yet.\n");
-
-                } else {
-                    perror("Read failed");
-                }
-
-                break;
-
+            if (scanf("%d", &post_choice) != 1) {
+                printf("Invalid input. Try again.\n");
+                while (getchar() != '\n');
+                continue;
             }
-            case 2:
+
+            if (post_choice == 1) {
+                break;  // resume loop
+            } else if (post_choice == 2) {
                 write(fd, "reset", 5);
-                printf("Counter reset.\n");
-
-                break;
-
-            case 3:
-                write(fd, "stop", 4);
-                printf("Counting stopped.\n");
-
-                break;
-
-            case 4:
-                write(fd, "start", 5);
-                printf("Counting resumed.\n");
-
-                break;
-
-            case 5:
+                printf("Click counter has been reset.\n");
+                break;  // restart loop
+            } else if (post_choice == 3) {
+                printf("Exiting program.\n");
                 close(fd);
                 return;
-
-            default:
-                printf("Invalid choice.\n");
-
+            } else {
+                printf("Invalid choice. Please select a valid number\n");
+            }
         }
-
     }
-
 }
+
 
 // Helper function to set terminal to raw mode to allow non-blocking and unbuffered keyboard input
 void set_raw_mode(int enable) {
@@ -165,10 +161,11 @@ void movement_tracker_menu() {
     }
 
     int tracking_enabled = 0;  // Flag for tracking mode (0: not tracking, 1: tracking enabled)
-    signed char buffer[64];    // Buffer to store mouse movement data
+    signed char buffer[128];    // Buffer to store mouse movement data
 
     setvbuf(stdout, NULL, _IONBF, 0);  // Disable buffering for stdout
-
+    printf("Movement tracker initialized.\n");
+     
     while(1) {
         // Display movement tracker sub-menu
         printf("\n-- Movement Tracker --\n");

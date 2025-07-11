@@ -49,7 +49,7 @@ struct usb_mouse {
 
     // Mutex for movement data read sync
     struct mutex move_mutex;
-    unsigned char last_packet[3];
+    unsigned char last_packet[8];
     bool packet_available;
 
 };
@@ -73,23 +73,27 @@ static void usb_mouse_irq(struct urb *urb) // Triggered when mouse sends data
         int left_pressed = mouse->data[0] & 0x01;
         if (left_pressed && !last_left) {
             mouse->click_count++;
-            printk(KERN_INFO "Mouse clicked! Total: %d\n", mouse->click_count);
+            printk(KERN_INFO "[Mouse Click] Mouse button clicked. Total count: %d\n", mouse->click_count);
         }
         last_left = left_pressed;
 
         // Track mouse movement
-        signed char dx = mouse->data[1];
-        signed char dy = mouse->data[2];
+        int16_t dx = (int16_t)((mouse->data[3] << 8) | mouse->data[2]);
+        int16_t dy = (int16_t)((mouse->data[5] << 8) | mouse->data[4]);
+        printk(KERN_INFO "Interpreted dx: %d, dy: %d\n", dx, dy);
         mouse->x_pos += dx;
         mouse->y_pos -= dy;
 
         // Check for movement data in kernel logs
-        printk(KERN_INFO "Raw data: 0x%02x 0x%02x 0x%02x | dx: %d, dy: %d\n",
-            mouse->data[0], mouse->data[1], mouse->data[2], dx, dy);
+        printk(KERN_INFO "Full Raw Packet:");
+        for (int i = 0; i < 8; i++) {
+            printk(KERN_CONT " 0x%02x", mouse->data[i]);
+        }
+        printk(KERN_CONT "\n");
 
         // Save last packet data for movement device and updates availability flag, protected by mutex
         mutex_lock(&mouse->move_mutex);
-        memcpy(mouse->last_packet, mouse->data, 3);
+        memcpy(mouse->last_packet, mouse->data, mouse->pkt_len);
         mouse->packet_available = true;
         mutex_unlock(&mouse->move_mutex);
     } else if (status != 0){
@@ -130,15 +134,18 @@ static ssize_t click_write(struct file *file, const char __user *buf, size_t cou
     buffer[count] = '\0';
     if (strncmp(buffer, "reset", 5) == 0) {
         mouse->click_count = 0;
-        printk(KERN_INFO "Mouse click counter reset.\n");
+        printk(KERN_INFO "[Click] User issued RESET command\n");
 
     } else if (strncmp(buffer, "stop", 4) == 0) {
         mouse->enabled = false;
-        printk(KERN_INFO "Mouse click counter paused.\n");
+        printk(KERN_INFO "[Click] User issued STOP command\n");
+        
     } else if (strncmp(buffer, "start", 5) == 0) {
         mouse->enabled = true;
-        printk(KERN_INFO "Mouse click counter resumed.\n");
-    }
+        printk(KERN_INFO "[Click] User issued START command\n");
+}   else {
+        printk(KERN_WARNING "[Click] Unknown command received: %s\n", buffer);
+    }      
     return count;
 
 }
@@ -195,13 +202,16 @@ static ssize_t move_write(struct file *file, const char __user *buf, size_t coun
     if (strncmp(buffer, "reset", 5) == 0) {
         mouse->x_pos = 0;
         mouse->y_pos = 0;
-        printk(KERN_INFO "Mouse position reset.\n");
+        printk(KERN_INFO "[Move] User issued RESET command\n");
     } else if (strncmp(buffer, "stop", 4) == 0) {
         mouse->enabled = false;
-        printk(KERN_INFO "Mouse movement tracking paused.\n");
+        printk(KERN_INFO "[Move] User issued STOP command\n");
+        
     } else if (strncmp(buffer, "start", 5) == 0) {
         mouse->enabled = true;
-        printk(KERN_INFO "Mouse movement tracking resumed.\n");
+        printk(KERN_INFO "[Move] User issued START command\n");
+    } else {
+    printk(KERN_WARNING "[Move] Unknown command received: %s\n", buffer);
     }
     return count;
 }
@@ -300,8 +310,6 @@ static int usb_mouse_connect(struct usb_interface *interface, const struct usb_d
     mouse->move_device = device_create(mouse->move_class, NULL, mouse->move_devt, NULL, "usb_mouse_movements");
     if (IS_ERR(mouse->move_device))
         goto error10;
-
-    printk(KERN_INFO "Click counter and movement tracker initialized.\n");
     return 0;
 error10: // Failed to create movement char device
     class_destroy(mouse->move_class);

@@ -48,11 +48,20 @@ if [[ -e /dev/usb_mouse_clicks ]]; then
     sleep 1
 fi
 
-echo "[STEP 6] Inserting USB mouse driver module into kernel..."
+echo "[STEP 6] Removing existing driver module if loaded..."
+if lsmod | grep -q "^driver"; then
+    sudo rmmod driver
+    echo "[INFO] Previous 'driver' module removed."
+else
+    echo "[INFO] No existing 'driver' module loaded."
+fi
+
+
+echo "[STEP 7] Inserting USB mouse driver module into kernel..."
 sudo insmod driver.ko
 
-echo  "[STEP 7] dmesg input for USB mouse driver initialisation confirmation."
+echo  "[STEP 8] dmesg input for USB mouse driver initialisation confirmation."
 dmesg | tail -n 10
 
-echo "[STEP 8] Launching user interface..."
+echo "[STEP 9] Launching user interface..."
 sudo ./userprog
