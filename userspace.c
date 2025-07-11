@@ -21,13 +21,14 @@ int main() {
         printf("----- USB Mouse Driver Menu -----\n");
         printf("1. Click Counter\n");
         printf("2. Movement Tracker\n");
-        printf("3. Exit\n");
+        printf("3. Disconnect Mouse\n");
+        printf("4. Exit\n");
         printf("Please enter your choice: ");
 
         // Invalid user input handling
         if (scanf("%d", &user_choice) != 1) {
 
-            printf("Invalid input. Please enter a number between 1-3!\n");
+            printf("Invalid input. Please enter a number between 1-4!\n");
 
             while (getchar() != '\n');
 
@@ -43,8 +44,31 @@ int main() {
             case 2:
                 movement_tracker_menu();
                 break;
-
+            
             case 3:
+                const char *devices[] = {
+                "/dev/usb_mouse_movements",
+                "/dev/usb_mouse_clicks"
+                };
+
+                for (int i = 0; i < 2; ++i) {
+                    int fd = open(devices[i], O_RDWR);
+                    if (fd < 0) {
+                        fprintf(stderr, "Warning: Could not open %s\n", devices[i]);
+                    continue;
+                }
+                write(fd, "disconnect", 10);
+                close(fd);
+                }   
+
+                printf("Please remove the mouse from the USB port...\n");
+                printf("Press Enter once done: ");
+                while (getchar() != '\n');  // Clear leftover newline
+                getchar();  // Wait for actual Enter key
+                printf("Mouse disconnected successfully.\n");
+                exit(0);
+
+            case 4:
                 printf("Exiting USB Mouse Driver Menu...\n");
                 exit(0);
 

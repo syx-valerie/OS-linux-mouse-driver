@@ -32,6 +32,7 @@ struct usb_mouse {
     int click_count;
     int pkt_len;
     bool enabled;
+    bool disconnected;
     int x_pos;
     int y_pos;
 
@@ -143,7 +144,14 @@ static ssize_t click_write(struct file *file, const char __user *buf, size_t cou
     } else if (strncmp(buffer, "start", 5) == 0) {
         mouse->enabled = true;
         printk(KERN_INFO "[Click] User issued START command\n");
-}   else {
+        
+    } else if (strncmp(buffer, "disconnect", 10) == 0){
+        if (!mouse->disconnected){
+            mouse->disconnected = true;
+            mouse->enabled = false;
+            usb_kill_urb(mouse->irq);
+            printk(KERN_INFO "[Click] User issued DISCONNECT command\n");
+}   } else {
         printk(KERN_WARNING "[Click] Unknown command received: %s\n", buffer);
     }      
     return count;
@@ -251,6 +259,7 @@ static int usb_mouse_connect(struct usb_interface *interface, const struct usb_d
     if (mouse->pkt_len == 0)
         mouse->pkt_len = 8;
     mouse->enabled = true;
+    mouse->disconnected = false;
     mutex_init(&mouse->move_mutex);
     mouse->packet_available = false;
 
